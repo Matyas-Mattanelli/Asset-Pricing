@@ -63,7 +63,9 @@ monthly_return_names <- gsub(".Adjusted", ".MonthlyReturns", unlist(lapply(daily
 for (i in 1:length(monthly_returns)) { #Renaming the columns for clarity
   names(monthly_returns[[i]]) <- monthly_return_names[i]
 }
-rm(daily_adj_close)
+#Merge monthly excess returns
+monthly_returns_merged <- do.call(merge.xts, monthly_returns)
+saveRDS(monthly_returns_merged, file = "monthly_excess_returns.RData") #Saving for future use
 
 ### Defining a generic function to calculate a monthly measure from past 12 months of daily data ###
 
@@ -87,8 +89,9 @@ calc_measure <- function(xts_object, func, measure_name) { #Expects a series of 
 ### Calculating skewness ###
 
 skewness_data <- lapply(monthly_returns, calc_measure, func = skewness, measure_name = "Skewness") #Applying the function (skewness from the moments package)
-#Saving the skewness data
-saveRDS(skewness_data, file = "skewness_data.RData")
+#Merging skewness data
+skewness_data_merged <- do.call(merge.xts, skewness_data)
+saveRDS(skewness_data_merged, file = "skewness.RData") #Saving for future use
 
 ### Calculating betas ###
 
@@ -99,14 +102,48 @@ calc_beta <- function(xts_object) {
 }
 #Applying the function
 betas <- lapply(monthly_returns, calc_measure, func = calc_beta, measure_name = "Beta")
-#Saving the betas
-saveRDS(betas, file = "betas_data.RData")
+#Merging the betas
+betas_merged <- do.call(merge.xts, betas)
+saveRDS(betas_merged, file = "betas.RData") #Saving for future use
+
+### Extracting monthly market cap data ###
+
+market_cap_monthly <- lapply(market_cap, to.monthly, OHLC = F, indexAt = "lastof") #Converting daily to monthly
+market_cap_monthly_merged <- do.call(merge.xts, market_cap_monthly) #Merging
+saveRDS(market_cap_monthly_merged, file = "market_cap_monthly.RData") #Saving for future use
 
 ### Calculating size ###
-size <- lapply(market_cap, function(x){log(to.monthly(x, OHLC = F, indexAt = "lastof"))}) #Converting daily to monthly and taking a log
-size_names <- gsub(".Adjusted", ".Size", unlist(lapply(daily_adj_close, names))) #New names
-for (i in 1:length(size)) { #Renaming the columns for clarity
-  names(size[[i]]) <- size_names[i]
+
+size <- log(market_cap_monthly_merged)
+names(size) <- gsub(".Adjusted", ".Size", unlist(lapply(daily_adj_close, names))) #New names
+saveRDS(size, file = "size.RData") #Saving for future use
+
+#####################################
+### Univariate portfolio analysis ###
+#####################################
+
+#Load relevant data
+rm(list = ls()) #Removes everything from the environment
+monthly_returns <- readRDS("monthly_excess_returns.RData")
+skewness_data <- readRDS("skewness.RData")
+betas <- readRDS("betas.RData")
+market_cap <- readRDS("market_cap_monthly.RData")
+size <- readRDS("size.RData")
+
+### Defining a function to perform a univariate sort ###
+univariate_sort <- function(sort_variable) {
+  for (i in 1:nrow(data_to_use)) { #Looping through the rows (periods)
+    
+  }
 }
-#Saving size
-saveRDS(size, file = "size_data.RData")
+
+##############################################################################################
+
+#Checking NAs
+for (i in list(monthly_returns, skewness_data, betas, market_cap, size)) {
+  na_count <- apply(i, 2, function(x) {sum(is.na(x))})
+  print(sort(na_count[na_count!=0], decreasing = T)) #Market cap (and thus size) have three stocks with many missing values. May need to disregard them
+}
+#Market cap stocks with many NAs
+na_count_market_cap <- apply(market_cap, 2, function(x){sum(is.na(x))})
+stocks_to_drop <- gsub(".Market_Cap", "", names(na_count_market_cap)[na_count_market_cap > 50])
