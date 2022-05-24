@@ -22,7 +22,6 @@ colnames(fffactors_monthly)[1] <- "Date"
 #### Extracting the Adjusted Close Price ###
 
 daily_adj_close <- lapply(yahoo_data, "[", , 6) #The unused argument is not an error, we have to skip it to specify columns
-rm(yahoo_data) #Removing from the environment since is quite large and we do not need it
 
 ### Extracting market risk premium and the risk-free rate ###
 
@@ -36,7 +35,9 @@ rf_daily <- xts(fffactors_daily$RF, order.by = fffactors_daily$Date)
 names(rf_daily) <- "RF_daily"
 rf_monthly <- xts(fffactors_monthly$RF, order.by = fffactors_monthly$Date)
 names(rf_monthly) <- "RF_monthly"
-rm(fffactors_daily, fffactors_monthly) #Removing from the environment since they are unnecessary
+fffactors_monthly_xts <- as.xts(fffactors_monthly[, 2:5], order.by = fffactors_monthly$Date) #Converting monhtly factors to xts
+fffactors_monthly_xts <- fffactors_monthly_xts["2007/"] #Restricting the period since we do not need older data
+#saveRDS(fffactors_monthly_xts, file = "fffactors_monthly.RData") #Saving for future use
 
 ### Calculating excess returns ###
 
@@ -65,7 +66,7 @@ for (i in 1:length(monthly_returns)) { #Renaming the columns for clarity
 }
 #Merge monthly excess returns
 monthly_returns_merged <- do.call(merge.xts, monthly_returns)
-saveRDS(monthly_returns_merged, file = "monthly_excess_returns.RData") #Saving for future use
+#saveRDS(monthly_returns_merged, file = "monthly_excess_returns.RData") #Saving for future use
 
 ### Defining a generic function to calculate a monthly measure from past 12 months of daily data ###
 
@@ -91,7 +92,7 @@ calc_measure <- function(xts_object, func, measure_name) { #Expects a series of 
 skewness_data <- lapply(monthly_returns, calc_measure, func = skewness, measure_name = "Skewness") #Applying the function (skewness from the moments package)
 #Merging skewness data
 skewness_data_merged <- do.call(merge.xts, skewness_data)
-saveRDS(skewness_data_merged, file = "skewness.RData") #Saving for future use
+#saveRDS(skewness_data_merged, file = "skewness.RData") #Saving for future use
 
 ### Calculating betas ###
 
@@ -104,19 +105,19 @@ calc_beta <- function(xts_object) {
 betas <- lapply(monthly_returns, calc_measure, func = calc_beta, measure_name = "Beta")
 #Merging the betas
 betas_merged <- do.call(merge.xts, betas)
-saveRDS(betas_merged, file = "betas.RData") #Saving for future use
+#saveRDS(betas_merged, file = "betas.RData") #Saving for future use
 
 ### Extracting monthly market cap data ###
 
 market_cap_monthly <- lapply(market_cap, to.monthly, OHLC = F, indexAt = "lastof") #Converting daily to monthly
 market_cap_monthly_merged <- do.call(merge.xts, market_cap_monthly) #Merging
-saveRDS(market_cap_monthly_merged, file = "market_cap_monthly.RData") #Saving for future use
+#saveRDS(market_cap_monthly_merged, file = "market_cap_monthly.RData") #Saving for future use
 
 ### Calculating size ###
 
 size <- log(market_cap_monthly_merged)
 names(size) <- gsub(".Adjusted", ".Size", unlist(lapply(daily_adj_close, names))) #New names
-saveRDS(size, file = "size.RData") #Saving for future use
+#saveRDS(size, file = "size.RData") #Saving for future use
 
 #####################################
 ### Univariate portfolio analysis ###
@@ -129,14 +130,43 @@ skewness_data <- readRDS("skewness.RData")
 betas <- readRDS("betas.RData")
 market_cap <- readRDS("market_cap_monthly.RData")
 size <- readRDS("size.RData")
+fffactors <- readRDS("fffactors_monthly.RData")
 
-### Defining a function to perform a univariate sort ###
-univariate_sort <- function(sort_variable) {
-  for (i in 1:nrow(data_to_use)) { #Looping through the rows (periods)
-    
+### Defining a function to perform a univariate sort ### IN PROGRESS
+univariate_sort <- function(sort_variable, no_of_ports = 5, weighted = F) {
+  for (i in 1:nrow(sort_variable)) { #Loop through the rows (periods)
+    average_sort_values <- rep(NA, no_of_ports) #Place holder for the cross-sectional average values of the sort variable
+    average_returns <- rep(NA, no_of_ports + 1) #Place holder for the cross-sectional average values of the 1-ahead reurns
+    current_period <- index(sort_variable)[i] #Store the current period
+    next_period <- as.Date(as.yearmon(current_period + months(1)), frac = 1) #Store the next period (for the 1-ahead returns)
+    if (!next_period %in% index(monthly_returns)) { #In case we do not have 1-ahead returns, skip the period
+      next
+    }
+    breakpoints <- quantile(sort_variable[current_period], probs = seq(1/no_of_ports, 1 - 1/no_of_ports, 1/no_of_ports), na.rm = T) #Find the breakpoints
+    for (j in 1:no_of_ports) { #Looping through the portfolios
+      if (j == 1) { #For the first portfolio we have only one condition
+        indic <- which(sort_variable[current_period] <= breakpoints[j]) #Find the stocks in the portfolio and save their column indices
+      } else if (j == no_of_ports) { #For the last portfolio we have only one condition as well
+        indic <- which(sort_variable[current_period] >= breakpoints[j])
+      } else { #The rest of the portfolios (two conditions)
+        indic <- which(sort_variable[current_period] >= breakpoints[j] & sort_variable[current_period] <= breakpoints[j+1]) #"=" at both inequalities to prevent empty portfolios
+      }
+      if (weighted == T) { #Market cap weighted average
+        average_returns[j] <- weighted.mean(monthly_returns[next_period, indic], w = 1/market_cap[current_period, indic], na.rm = T)
+      } else { #Equally-weighted average
+        average_returns[j] <- mean(monthly_returns[next_period, indic], na.rm = T) #Calculate the average of 1-ahead returns
+      }
+      average_sort_values[j] <- mean(sort_variable[current_period, indic], na.rm = T) #Calculate the average of the sort variable for the given portfolio
+    }
+    average_returns[no_of_ports + 1] <- average_returns[no_of_ports] - average_returns[1] #The difference portfolio
   }
+  
 }
-
+#Checking the merge for empty lines (may wanna add that to the function above)
+x <- merge.xts(lag(monthly_returns, k = -1), betas)
+x_filtered <- x[rowSums(is.na(x)) != ncol(x),]
+nrow(x)
+nrow(x_filtered)
 ##############################################################################################
 
 #Checking NAs
