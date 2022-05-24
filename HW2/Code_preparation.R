@@ -10,14 +10,12 @@ library(moments)
 
 ### Loading the data ###
 
-yahoo_data <- readRDS("list_yahoo.RData") #Adjusted close prices and volumes
-market_cap <- readRDS("market_cap_data.RData") #Market capitalization
-fffactors_monthly <- read_csv("F-F_Research_Data_Factors.CSV", skip = 2, n_max = 1149) #Need to limit the number of rows since the file contains yearly data as well
-fffactors_daily <- read_csv("F-F_Research_Data_Factors_daily.CSV", skip = 3, n_max = 25210) #Last row is some copyright => skip
-fffactors_monthly <- as.data.frame(fffactors_monthly) #Converting from tibble to a data frame
-fffactors_daily <- as.data.frame(fffactors_daily) #Converting from tibble to a data frame
-colnames(fffactors_daily)[1] <- "Date"
-colnames(fffactors_monthly)[1] <- "Date"
+yahoo_data <- readRDS("Raw data/list_yahoo.RData") #Adjusted close prices and volumes
+market_cap <- readRDS("Raw data/market_cap_data.RData") #Market capitalization
+fffactors_monthly <- read_csv("Raw data/F-F_Research_Data_Factors.CSV", skip = 2, n_max = 1149) #Need to limit the number of rows since the file contains yearly data as well
+fffactors_daily <- read_csv("Raw data/F-F_Research_Data_Factors_daily.CSV", skip = 3, n_max = 25210) #Last row is some copyright => skip
+momentum <- read_csv("Raw data/F-F_Momentum_Factor.CSV", skip = 12, n_max  = 1144, na = c("", "NA", -99.99, -999))
+liquidity <- read.delim("Raw data/liq_data_1962_2021.txt", skip = 10)
 
 #### Extracting the Adjusted Close Price ###
 
@@ -25,6 +23,10 @@ daily_adj_close <- lapply(yahoo_data, "[", , 6) #The unused argument is not an e
 
 ### Extracting market risk premium and the risk-free rate ###
 
+fffactors_monthly <- as.data.frame(fffactors_monthly) #Converting from tibble to a data frame
+fffactors_daily <- as.data.frame(fffactors_daily) #Converting from tibble to a data frame
+colnames(fffactors_daily)[1] <- "Date"
+colnames(fffactors_monthly)[1] <- "Date"
 fffactors_daily$Date <- as.Date(as.character(fffactors_daily$Date), "%Y%m%d") #Creating a date (daily)
 fffactors_monthly$Date <-  as.Date(paste0(as.character(fffactors_monthly$Date),"01"), "%Y%m%d") + months(1) - days(1) #Creating a date (end of month)
 market_prem_daily <- xts(fffactors_daily$`Mkt-RF`, order.by = fffactors_daily$Date)
@@ -35,9 +37,28 @@ rf_daily <- xts(fffactors_daily$RF, order.by = fffactors_daily$Date)
 names(rf_daily) <- "RF_daily"
 rf_monthly <- xts(fffactors_monthly$RF, order.by = fffactors_monthly$Date)
 names(rf_monthly) <- "RF_monthly"
-fffactors_monthly_xts <- as.xts(fffactors_monthly[, 2:5], order.by = fffactors_monthly$Date) #Converting monhtly factors to xts
+fffactors_monthly_xts <- as.xts(fffactors_monthly[, 2:5], order.by = fffactors_monthly$Date) #Converting monthly factors to xts
 fffactors_monthly_xts <- fffactors_monthly_xts["2007/"] #Restricting the period since we do not need older data
-#saveRDS(fffactors_monthly_xts, file = "fffactors_monthly.RData") #Saving for future use
+#saveRDS(fffactors_monthly_xts, file = "Final data/fffactors_monthly.RData") #Saving for future use
+
+### Extracting momentum ###
+
+momentum <- as.data.frame(momentum)
+colnames(momentum)[1] <- "Date"
+momentum$Date <-  as.Date(paste0(as.character(momentum$Date),"01"), "%Y%m%d") + months(1) - days(1) #Creating a date (end of month)
+momentum_xts <- xts(momentum[, 2], order.by = momentum$Date) #Converting to xts
+names(momentum_xts) <- "Momentum" #Renaming
+momentum_xts <- momentum_xts["2007/"] #Restricting the period
+#saveRDS(momentum_xts, "Final data/momentum.RData") #Saving for future use
+
+### Extracting liquidity ###
+
+colnames(liquidity)[1] <- "Date"
+liquidity$Date <-  as.Date(paste0(as.character(liquidity$Date),"01"), "%Y%m%d") + months(1) - days(1) #Creating a date (end of month)
+liquidity_xts <- xts(liquidity[, 2], order.by = liquidity$Date) #Converting to xts
+names(liquidity_xts) <- "Liquidity" #Renaming
+liquidity_xts <- liquidity_xts["2007/"] #Restricting the period
+#saveRDS(liquidity_xts, "Final data/liquidity.RData") #Saving for future use
 
 ### Calculating excess returns ###
 
@@ -66,7 +87,7 @@ for (i in 1:length(monthly_returns)) { #Renaming the columns for clarity
 }
 #Merge monthly excess returns
 monthly_returns_merged <- do.call(merge.xts, monthly_returns)
-#saveRDS(monthly_returns_merged, file = "monthly_excess_returns.RData") #Saving for future use
+#saveRDS(monthly_returns_merged, file = "Final data/monthly_excess_returns.RData") #Saving for future use
 
 ### Defining a generic function to calculate a monthly measure from past 12 months of daily data ###
 
@@ -92,7 +113,7 @@ calc_measure <- function(xts_object, func, measure_name) { #Expects a series of 
 skewness_data <- lapply(monthly_returns, calc_measure, func = skewness, measure_name = "Skewness") #Applying the function (skewness from the moments package)
 #Merging skewness data
 skewness_data_merged <- do.call(merge.xts, skewness_data)
-#saveRDS(skewness_data_merged, file = "skewness.RData") #Saving for future use
+#saveRDS(skewness_data_merged, file = "Final data/skewness.RData") #Saving for future use
 
 ### Calculating betas ###
 
@@ -105,19 +126,19 @@ calc_beta <- function(xts_object) {
 betas <- lapply(monthly_returns, calc_measure, func = calc_beta, measure_name = "Beta")
 #Merging the betas
 betas_merged <- do.call(merge.xts, betas)
-#saveRDS(betas_merged, file = "betas.RData") #Saving for future use
+#saveRDS(betas_merged, file = "Final data/betas.RData") #Saving for future use
 
 ### Extracting monthly market cap data ###
 
 market_cap_monthly <- lapply(market_cap, to.monthly, OHLC = F, indexAt = "lastof") #Converting daily to monthly
 market_cap_monthly_merged <- do.call(merge.xts, market_cap_monthly) #Merging
-#saveRDS(market_cap_monthly_merged, file = "market_cap_monthly.RData") #Saving for future use
+#saveRDS(market_cap_monthly_merged, file = "Final data/market_cap_monthly.RData") #Saving for future use
 
 ### Calculating size ###
 
 size <- log(market_cap_monthly_merged)
 names(size) <- gsub(".Adjusted", ".Size", unlist(lapply(daily_adj_close, names))) #New names
-#saveRDS(size, file = "size.RData") #Saving for future use
+#saveRDS(size, file = "Final data/size.RData") #Saving for future use
 
 #####################################
 ### Univariate portfolio analysis ###
@@ -125,18 +146,22 @@ names(size) <- gsub(".Adjusted", ".Size", unlist(lapply(daily_adj_close, names))
 
 #Load relevant data
 rm(list = ls()) #Removes everything from the environment
-monthly_returns <- readRDS("monthly_excess_returns.RData")
-skewness_data <- readRDS("skewness.RData")
-betas <- readRDS("betas.RData")
-market_cap <- readRDS("market_cap_monthly.RData")
-size <- readRDS("size.RData")
-fffactors <- readRDS("fffactors_monthly.RData")
+monthly_returns <- readRDS("Final data/monthly_excess_returns.RData")
+skewness_data <- readRDS("Final data/skewness.RData")
+betas <- readRDS("Final data/betas.RData")
+market_cap <- readRDS("Final data/market_cap_monthly.RData")
+size <- readRDS("Final data/size.RData")
+fffactors <- readRDS("Final data/fffactors_monthly.RData")
+momentum <- readRDS("Final data/momentum.RData")
+liquidity <- readRDS("Final data/liquidity.RData")
 
 ### Defining a function to perform a univariate sort ### IN PROGRESS
 univariate_sort <- function(sort_variable, no_of_ports = 5, weighted = F) {
+  all_avg_sort_values <- c() #Empty vector to which we will append the results from each period (sort variable)
+  all_avg_returns <- c() #Empty vector to which we will append the results from each period (returns)
   for (i in 1:nrow(sort_variable)) { #Loop through the rows (periods)
     average_sort_values <- rep(NA, no_of_ports) #Place holder for the cross-sectional average values of the sort variable
-    average_returns <- rep(NA, no_of_ports + 1) #Place holder for the cross-sectional average values of the 1-ahead reurns
+    average_returns <- rep(NA, no_of_ports + 1) #Place holder for the cross-sectional average values of the 1-ahead returns
     current_period <- index(sort_variable)[i] #Store the current period
     next_period <- as.Date(as.yearmon(current_period + months(1)), frac = 1) #Store the next period (for the 1-ahead returns)
     if (!next_period %in% index(monthly_returns)) { #In case we do not have 1-ahead returns, skip the period
@@ -152,21 +177,21 @@ univariate_sort <- function(sort_variable, no_of_ports = 5, weighted = F) {
         indic <- which(sort_variable[current_period] >= breakpoints[j] & sort_variable[current_period] <= breakpoints[j+1]) #"=" at both inequalities to prevent empty portfolios
       }
       if (weighted == T) { #Market cap weighted average
-        average_returns[j] <- weighted.mean(monthly_returns[next_period, indic], w = 1/market_cap[current_period, indic], na.rm = T)
+        mc_weights <- market_cap[current_period, indic] #Storing the weights
+        mc_weights[is.na(mc_weights)] <- 0 #0 value for missings = they have no weight
+        average_returns[j] <- weighted.mean(monthly_returns[next_period, indic], w = mc_weights, na.rm = T)
       } else { #Equally-weighted average
         average_returns[j] <- mean(monthly_returns[next_period, indic], na.rm = T) #Calculate the average of 1-ahead returns
       }
       average_sort_values[j] <- mean(sort_variable[current_period, indic], na.rm = T) #Calculate the average of the sort variable for the given portfolio
     }
     average_returns[no_of_ports + 1] <- average_returns[no_of_ports] - average_returns[1] #The difference portfolio
+    all_avg_sort_values <- rbind(all_avg_sort_values, average_sort_values) #Append the results
+    all_avg_returns <- rbind(all_avg_returns, average_returns) #Append the results
   }
   
 }
-#Checking the merge for empty lines (may wanna add that to the function above)
-x <- merge.xts(lag(monthly_returns, k = -1), betas)
-x_filtered <- x[rowSums(is.na(x)) != ncol(x),]
-nrow(x)
-nrow(x_filtered)
+
 ##############################################################################################
 
 #Checking NAs
@@ -177,3 +202,9 @@ for (i in list(monthly_returns, skewness_data, betas, market_cap, size)) {
 #Market cap stocks with many NAs
 na_count_market_cap <- apply(market_cap, 2, function(x){sum(is.na(x))})
 stocks_to_drop <- gsub(".Market_Cap", "", names(na_count_market_cap)[na_count_market_cap > 50])
+
+#Checking the merge for empty lines (may wanna add that to the function above)
+x <- merge.xts(lag(monthly_returns, k = -1), skewness_data)
+x_filtered <- x[rowSums(is.na(x[, 1:250])) != 250 & rowSums(is.na(x[, 251:500])) != 250 ,]
+nrow(x)
+nrow(x_filtered)
