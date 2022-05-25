@@ -3,6 +3,8 @@ library(readr)
 library(lubridate)
 library(quantmod)
 library(moments)
+library(sandwich)
+library(lmtest)
 
 ########################
 ### Data preparation ###
@@ -16,6 +18,14 @@ fffactors_monthly <- read_csv("Raw data/F-F_Research_Data_Factors.CSV", skip = 2
 fffactors_daily <- read_csv("Raw data/F-F_Research_Data_Factors_daily.CSV", skip = 3, n_max = 25210) #Last row is some copyright => skip
 momentum <- read_csv("Raw data/F-F_Momentum_Factor.CSV", skip = 12, n_max  = 1144, na = c("", "NA", -99.99, -999))
 liquidity <- read.delim("Raw data/liq_data_1962_2021.txt", skip = 10)
+
+### Defining a function to strip an xts object of lines with 0 observations (all NAs) ###
+
+strip_empty_lines <- function(xts_object) {
+  na_sums <- apply(xts_object, 1, function(x) {sum(is.na(x))})
+  indic <- na_sums < ncol(xts_object)
+  return(xts_object[indic])
+}
 
 #### Extracting the Adjusted Close Price ###
 
@@ -45,7 +55,7 @@ fffactors_monthly_xts <- fffactors_monthly_xts["2007/"] #Restricting the period 
 
 momentum <- as.data.frame(momentum)
 colnames(momentum)[1] <- "Date"
-momentum$Date <-  as.Date(paste0(as.character(momentum$Date),"01"), "%Y%m%d") + months(1) - days(1) #Creating a date (end of month)
+momentum$Date <-  as.Date(paste0(as.character(momentum$Date[1]),"01"), "%Y%m%d") + months(1) - days(1) #Creating a date (end of month)
 momentum_xts <- xts(momentum[, 2], order.by = momentum$Date) #Converting to xts
 names(momentum_xts) <- "Momentum" #Renaming
 momentum_xts <- momentum_xts["2007/"] #Restricting the period
@@ -113,6 +123,7 @@ calc_measure <- function(xts_object, func, measure_name) { #Expects a series of 
 skewness_data <- lapply(monthly_returns, calc_measure, func = skewness, measure_name = "Skewness") #Applying the function (skewness from the moments package)
 #Merging skewness data
 skewness_data_merged <- do.call(merge.xts, skewness_data)
+skewness_data_merged <- strip_empty_lines(skewness_data_merged)
 #saveRDS(skewness_data_merged, file = "Final data/skewness.RData") #Saving for future use
 
 ### Calculating betas ###
@@ -126,18 +137,21 @@ calc_beta <- function(xts_object) {
 betas <- lapply(monthly_returns, calc_measure, func = calc_beta, measure_name = "Beta")
 #Merging the betas
 betas_merged <- do.call(merge.xts, betas)
+betas_merged <- strip_empty_lines(betas_merged)
 #saveRDS(betas_merged, file = "Final data/betas.RData") #Saving for future use
 
 ### Extracting monthly market cap data ###
 
 market_cap_monthly <- lapply(market_cap, to.monthly, OHLC = F, indexAt = "lastof") #Converting daily to monthly
 market_cap_monthly_merged <- do.call(merge.xts, market_cap_monthly) #Merging
+market_cap_monthly_merged <- strip_empty_lines(market_cap_monthly_merged)
 #saveRDS(market_cap_monthly_merged, file = "Final data/market_cap_monthly.RData") #Saving for future use
 
 ### Calculating size ###
 
 size <- log(market_cap_monthly_merged)
 names(size) <- gsub(".Adjusted", ".Size", unlist(lapply(daily_adj_close, names))) #New names
+size <- strip_empty_lines(size)
 #saveRDS(size, file = "Final data/size.RData") #Saving for future use
 
 #####################################
@@ -155,42 +169,80 @@ fffactors <- readRDS("Final data/fffactors_monthly.RData")
 momentum <- readRDS("Final data/momentum.RData")
 liquidity <- readRDS("Final data/liquidity.RData")
 
-### Defining a function to perform a univariate sort ### IN PROGRESS
+### Defining a function to perform a univariate sort ###
+
 univariate_sort <- function(sort_variable, no_of_ports = 5, weighted = F) {
+  sort_variable_name <- gsub("MDLZ.", "", colnames(sort_variable)[1]) #Extracting the name of the sorting variable
+  final_ouptut <- as.data.frame(matrix(ncol = no_of_ports + 1, nrow = 5)) #Data frame for the final output
+  colnames(final_ouptut) <- c(1:no_of_ports, paste(no_of_ports, 1, sep = "-")) #Column names for clarity
+  row.names(final_ouptut) <- c(paste0("Mean of ", sort_variable_name), "Mean of one-ahead returns", "T-statistic", "Alpha", "T-statistic (alpha)")
   all_avg_sort_values <- c() #Empty vector to which we will append the results from each period (sort variable)
   all_avg_returns <- c() #Empty vector to which we will append the results from each period (returns)
   for (i in 1:nrow(sort_variable)) { #Loop through the rows (periods)
-    average_sort_values <- rep(NA, no_of_ports) #Place holder for the cross-sectional average values of the sort variable
-    average_returns <- rep(NA, no_of_ports + 1) #Place holder for the cross-sectional average values of the 1-ahead returns
     current_period <- index(sort_variable)[i] #Store the current period
-    next_period <- as.Date(as.yearmon(current_period + months(1)), frac = 1) #Store the next period (for the 1-ahead returns)
+    next_period <- as.Date(as.yearmon(current_period %m+% months(1)), frac = 1) #Store the next period (for the 1-ahead returns)
     if (!next_period %in% index(monthly_returns)) { #In case we do not have 1-ahead returns, skip the period
       next
     }
+    average_sort_values <- rep(NA, no_of_ports) #Place holder for the cross-sectional average values of the sort variable
+    average_returns <- xts(matrix(nrow = 1, ncol = no_of_ports + 1), order.by = current_period) #Place holder for the cross-sectional average values of the 1-ahead returns
     breakpoints <- quantile(sort_variable[current_period], probs = seq(1/no_of_ports, 1 - 1/no_of_ports, 1/no_of_ports), na.rm = T) #Find the breakpoints
     for (j in 1:no_of_ports) { #Looping through the portfolios
       if (j == 1) { #For the first portfolio we have only one condition
         indic <- which(sort_variable[current_period] <= breakpoints[j]) #Find the stocks in the portfolio and save their column indices
       } else if (j == no_of_ports) { #For the last portfolio we have only one condition as well
-        indic <- which(sort_variable[current_period] >= breakpoints[j])
+        indic <- which(sort_variable[current_period] >= breakpoints[j -  1])
       } else { #The rest of the portfolios (two conditions)
-        indic <- which(sort_variable[current_period] >= breakpoints[j] & sort_variable[current_period] <= breakpoints[j+1]) #"=" at both inequalities to prevent empty portfolios
+        indic <- which(sort_variable[current_period] >= breakpoints[j - 1] & sort_variable[current_period] <= breakpoints[j]) #"=" at both inequalities to prevent empty portfolios
       }
       if (weighted == T) { #Market cap weighted average
-        mc_weights <- market_cap[current_period, indic] #Storing the weights
+        mc_weights <- as.numeric(market_cap[current_period, indic]) #Storing the weights
+        if (length(mc_weights) == 0) { #If we do not have the market cap data, we have to skip
+          next
+        }
         mc_weights[is.na(mc_weights)] <- 0 #0 value for missings = they have no weight
-        average_returns[j] <- weighted.mean(monthly_returns[next_period, indic], w = mc_weights, na.rm = T)
+        average_returns[, j] <- weighted.mean(as.numeric(monthly_returns[next_period, indic]), w = mc_weights, na.rm = T)
       } else { #Equally-weighted average
-        average_returns[j] <- mean(monthly_returns[next_period, indic], na.rm = T) #Calculate the average of 1-ahead returns
+        average_returns[, j] <- mean(monthly_returns[next_period, indic], na.rm = T) #Calculate the average of 1-ahead returns
       }
       average_sort_values[j] <- mean(sort_variable[current_period, indic], na.rm = T) #Calculate the average of the sort variable for the given portfolio
     }
-    average_returns[no_of_ports + 1] <- average_returns[no_of_ports] - average_returns[1] #The difference portfolio
+    average_returns[, no_of_ports + 1] <- average_returns[, no_of_ports] - average_returns[, 1] #The difference portfolio
     all_avg_sort_values <- rbind(all_avg_sort_values, average_sort_values) #Append the results
     all_avg_returns <- rbind(all_avg_returns, average_returns) #Append the results
   }
-  
+  final_ouptut[1, ] <- c(apply(all_avg_sort_values, 2, mean, na.rm = T) , NA) #Final average values of the sort variable
+  for (i in 1:(no_of_ports + 1)) { #Loop through the portfolios and get the time series avg of returns, t-stat and alpha
+    model_avg <- lm(na.omit(all_avg_returns[, i]) ~ 1) #Regress returns of each portfolio on the intercept (for weighted portfolio there may be missing values and coeftest cannot handle them => remove)
+    model_avg_adj <- coeftest(model_avg, vcov = NeweyWest(model_avg, lag = 6)) #Make Newey-West adjustment of std errors
+    final_ouptut[2, i] <- model_avg_adj[1, 1] #Store the intercept (=time series average)
+    final_ouptut[3, i] <- model_avg_adj[1, 3] #Store the t-statistic
+    #Regress the returns on the five factors
+    factor_data <- na.omit(merge.xts(all_avg_returns[, i], fffactors[, 1:3], momentum, liquidity)) #Merge the data needed for the factor model (to secure the same number of obs) + remove NAs since coeftest cannot handle it
+    factor_model <- lm(factor_data[, 1] ~ factor_data[, 2] + factor_data[, 3] + factor_data[, 4] + factor_data[, 5] + 
+                         factor_data[, 6])
+    factor_model_adj <- coeftest(factor_model, vcov = NeweyWest(factor_model, lag = 6)) #Make Newey-West adjustment
+    final_ouptut[4, i] <- factor_model_adj[1, 1] #Store the intercept (alpha)
+    final_ouptut[5, i] <- factor_model_adj[1, 3] #Store the t-statistic
+  }
+  return(final_ouptut)
 }
+
+### Univariate sort on betas ###
+
+univariate_sort_betas <- univariate_sort(betas) #Equally weighted
+debug(univariate_sort)
+univariate_sort_weighted_betas <- univariate_sort(betas, weighted = T) #Market cap weighted (rbind warning should be okay, just NAs)
+
+### Univariate sort on size ###
+
+univariate_sort_size <- univariate_sort(size) #Equally weighted
+univariate_sort_weighted_size <- univariate_sort(size, weighted = T) #Market cap weighted
+
+### Univariate sort on skewness ###
+
+univariate_sort_skewness <- univariate_sort(skewness_data) #Equally weighted
+univariate_sort_weighted_skewness <- univariate_sort(skewness_data, weighted = T) #Market cap weighted (rbind warning should be okay, just NAs)
 
 ##############################################################################################
 
