@@ -151,7 +151,8 @@ market_cap_monthly_merged <- strip_empty_lines(market_cap_monthly_merged)
 
 size <- log(market_cap_monthly_merged)
 names(size) <- gsub(".Adjusted", ".Size", unlist(lapply(daily_adj_close, names))) #New names
-size <- strip_empty_lines(size)
+size <- as.xts(apply(size, 2, function(x) {ifelse(is.finite(x), x, NA)}), order.by = index(size)) #Replace -Inf with NA
+size <- strip_empty_lines(size) #Remove empty rows
 #saveRDS(size, file = "Final data/size.RData") #Saving for future use
 
 #####################################
@@ -243,6 +244,71 @@ univariate_sort_weighted_size <- univariate_sort(size, weighted = T) #Market cap
 
 univariate_sort_skewness <- univariate_sort(skewness_data) #Equally weighted
 univariate_sort_weighted_skewness <- univariate_sort(skewness_data, weighted = T) #Market cap weighted (rbind warning should be okay, just NAs)
+
+####################################
+### Bivariate portfolio analysis ###
+####################################
+
+### Defining a function to perform a bivariate sort (independent and weighted) ### IN PROGRESS (adjusting the univariate sort function)
+
+bivariate_sort <- function(sort_variable1, sort_variable2, no_of_ports1 = 3, no_of_ports2 = 3) {
+  sort_variable1_name <- gsub("MDLZ.", "", colnames(sort_variable1)[1]) #Extracting the name of the first sorting variable
+  sort_variable2_name <- gsub("MDLZ.", "", colnames(sort_variable2)[1]) #Extracting the name of the second sorting variable
+  final_ouptut <- as.data.frame(matrix(ncol = no_of_ports1 + 1, nrow = 4*(no_of_ports2 + 1))) #Data frame for the final output
+  colnames(final_ouptut) <- c(paste0(sort_variable1, " ", 1:no_of_ports1), paste0(sort_variable1, " ", paste0(no_of_ports1, "-", 1))) #Column names for clarity
+  sort_varibale2_ports <- c(paste0(sort_variable2, " ", 1:no_of_ports2), paste0(sort_variable2, " ", paste0(no_of_ports2, "-", 1))) #Portfolios of the second sort variable stored to use for row names of the final output
+  statistics <- c("Mean", "T-statistic", "Alpha", "T-statistic (alpha)") #Statistics to paste for row names
+  row.names(final_ouptut) <- as.vector(t(outer(sort_varibale2_ports, statistics, FUN = "paste", sep = " - "))) #Row names for clarity
+  all_avg_returns <- c() #Empty vector to which we will append the results from each period (returns)
+  for (i in 1:nrow(sort_variable1)) { #Loop through the rows (periods) of the second variable (we are interested in the intersection of the periods so we can loop through just one of the indices)
+    current_period <- index(sort_variable1)[i] #Store the current period
+    next_period <- as.Date(as.yearmon(current_period %m+% months(1)), frac = 1) #Store the next period (for the 1-ahead returns)
+    if (!next_period %in% index(monthly_returns) | !next_period %in% index(sort_variable2)) { #In case we do not have 1-ahead returns or the values for the second variable, skip the period
+      next
+    }
+    average_returns <- xts(matrix(nrow = 1, ncol = (no_of_ports1 + 1)*(no_of_ports2 + 2)), order.by = current_period) #Place holder for the cross-sectional average values of the 1-ahead returns
+    breakpoints1 <- quantile(sort_variable1[current_period], probs = c(0.3, 0.7), na.rm = T) #Find the breakpoints for the first sort variable (percentiles hardcoded for now)
+    breakpoints2 <- quantile(sort_variable2[current_period], probs = c(0.3, 0.7), na.rm = T) #Find the breakpoints for the second sort variable (percentiles hardcoded for now)
+    for (j in 1:(no_of_ports1 * no_of_ports2)) { #Looping through the portfolios
+      if (j == 1) { #For the first portfolio we have only one condition
+        indic <- which(sort_variable1[current_period] <= breakpoints1[j] & sort_variable2[current_period] <= breakpoints2[j] ) #Find the stocks in the portfolio and save their column indices
+      } else if (j == no_of_ports) { #For the last portfolio we have only one condition as well ### END OF ADJUSTMENTS SO FAR ###
+        indic <- which(sort_variable[current_period] >= breakpoints[j -  1])
+      } else { #The rest of the portfolios (two conditions)
+        indic <- which(sort_variable[current_period] >= breakpoints[j - 1] & sort_variable[current_period] <= breakpoints[j]) #"=" at both inequalities to prevent empty portfolios
+      }
+      if (weighted == T) { #Market cap weighted average
+        mc_weights <- as.numeric(market_cap[current_period, indic]) #Storing the weights
+        if (length(mc_weights) == 0) { #If we do not have the market cap data, we have to skip
+          next
+        }
+        mc_weights[is.na(mc_weights)] <- 0 #0 value for missings = they have no weight
+        average_returns[, j] <- weighted.mean(as.numeric(monthly_returns[next_period, indic]), w = mc_weights, na.rm = T)
+      } else { #Equally-weighted average
+        average_returns[, j] <- mean(monthly_returns[next_period, indic], na.rm = T) #Calculate the average of 1-ahead returns
+      }
+      average_sort_values[j] <- mean(sort_variable[current_period, indic], na.rm = T) #Calculate the average of the sort variable for the given portfolio
+    }
+    average_returns[, no_of_ports + 1] <- average_returns[, no_of_ports] - average_returns[, 1] #The difference portfolio
+    all_avg_sort_values <- rbind(all_avg_sort_values, average_sort_values) #Append the results
+    all_avg_returns <- rbind(all_avg_returns, average_returns) #Append the results
+  }
+  final_ouptut[1, ] <- c(apply(all_avg_sort_values, 2, mean, na.rm = T) , NA) #Final average values of the sort variable
+  for (i in 1:(no_of_ports + 1)) { #Loop through the portfolios and get the time series avg of returns, t-stat and alpha
+    model_avg <- lm(na.omit(all_avg_returns[, i]) ~ 1) #Regress returns of each portfolio on the intercept (for weighted portfolio there may be missing values and coeftest cannot handle them => remove)
+    model_avg_adj <- coeftest(model_avg, vcov = NeweyWest(model_avg, lag = 6)) #Make Newey-West adjustment of std errors
+    final_ouptut[2, i] <- model_avg_adj[1, 1] #Store the intercept (=time series average)
+    final_ouptut[3, i] <- model_avg_adj[1, 3] #Store the t-statistic
+    #Regress the returns on the five factors
+    factor_data <- na.omit(merge.xts(all_avg_returns[, i], fffactors[, 1:3], momentum, liquidity)) #Merge the data needed for the factor model (to secure the same number of obs) + remove NAs since coeftest cannot handle it
+    factor_model <- lm(factor_data[, 1] ~ factor_data[, 2] + factor_data[, 3] + factor_data[, 4] + factor_data[, 5] + 
+                         factor_data[, 6])
+    factor_model_adj <- coeftest(factor_model, vcov = NeweyWest(factor_model, lag = 6)) #Make Newey-West adjustment
+    final_ouptut[4, i] <- factor_model_adj[1, 1] #Store the intercept (alpha)
+    final_ouptut[5, i] <- factor_model_adj[1, 3] #Store the t-statistic
+  }
+  return(final_ouptut)
+}
 
 ##############################################################################################
 
