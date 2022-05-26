@@ -348,12 +348,62 @@ bivariate_sort_size_skewness
 ### Fama-Macbeth regression ###
 ###############################
 
-fama_macbeth <- function(xts_object) { #Expects an xts object where the first column is the independent variable (1-ahead returns in this case) and the remaining columns are the independent variables 
-  for (i in nrow(xts_object)) { #Loop through the periods
-    
+fama_macbeth <- function(indep_var) { #Expects a list of xts objects with independent variables
+  cross_sec_coefs <- c() #Empty vector to which we will append the coefficients for each period
+  for (i in 1:nrow(monthly_returns)) { #Loop through the periods
+    next_period <- index(monthly_returns)[i] #Store the period from which the one ahead returns come
+    current_period <- as.Date(as.yearmon(next_period %m-% months(1)), frac = 1) #Store the period for the independent variables
+    move_to_next_period <- F #Setting up an indicator for incomplete periods
+    for (j in 1:length(indep_var)) { #Check if the current period is contained in all independent variables
+      if (current_period %in% index(indep_var[[j]])) { #If it is, move to next variable
+        next
+      } else { #If it is not, set the indicator and break
+        move_to_next_period <- T
+        break
+      }
+    }
+    if (move_to_next_period == T) { #If one of the independent variables does not contain the required period, move to next period
+      next
+    }
+    cross_sec_data <- as.data.frame(matrix(ncol = length(indep_var) + 1, nrow = ncol(monthly_returns))) #Data holder for each period
+    colnames(cross_sec_data) <- c("Returns", names(indep_var)) #Column names that will be used in the formula
+    cross_sec_data[, 1] <- as.numeric(monthly_returns[next_period]) #Fill in the data for the dependent variable
+    for (j in 1:length(indep_var)) { #Fill in the data for each independent variable
+      cross_sec_data[, j + 1] <- as.numeric(indep_var[[j]][current_period])
+    }
+    form <- paste("Returns", paste(colnames(cross_sec_data)[2:ncol(cross_sec_data)], collapse = "+"), sep = "~") #Define the formula
+    cross_sec_model <- lm(form, data = cross_sec_data) #Estimate the model
+    cross_sec_coefs <- rbind(cross_sec_coefs, cross_sec_model$coefficients) #Append the coefficients
   }
+  final_output <- as.data.frame(matrix(nrow = 2, ncol = ncol(cross_sec_coefs))) #Place holder to store the final output (time series means and t-statistics)
+  colnames(final_output) <- colnames(cross_sec_coefs) #Rename the columns for clarity
+  row.names(final_output) <- c("Mean", "T-statistic") #Rename the rows for clarity
+  for (i in 1:ncol(cross_sec_coefs)) { #Calculate the time series mean and t-statistics for each coefficient
+    time_model <- lm(cross_sec_coefs[, i] ~ 1) #Regress each time series on a constant to get the mean estimate
+    time_model_adj <- coeftest(time_model, vcov = NeweyWest(time_model, lag = 4)) #Newey-West adjustment of the errors
+    final_output[1, i] <- time_model_adj[1, 1] #Store the mean
+    final_output[2, i] <- time_model_adj[1, 3] #Store the standard error
+  }
+  return(final_output)
 }
 
+### Fama-Macbeth for skewness alone ###
+
+FM_skewness <- fama_macbeth(list(Skewness = skewness_data))
+FM_skewness
+
+### Fama-Macbeth for skewness and 5-factors ### This is some kind of bullshit, the factors are the same for all stocks => the cross-sectional regressions do not make sense
+
+indep_var <- list(Skewness = skewness_data, MKT = fffactors[, 1], HML = fffactors[, 3], SMB = fffactors[, 2], Momentum = momentum,
+                  Liquidity = liquidity)
+FM_skewness_and_factors <- fama_macbeth(indep_var)
+FM_skewness
+
+### Fama-Macbeth for the three sort variables ###
+
+indep_var <- list(Skewness = skewness_data, Size = size, Beta = betas)
+FM_three_sorts <- fama_macbeth(indep_var)
+FM_three_sorts
 
 ##############################################################################################
 
