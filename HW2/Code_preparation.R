@@ -17,7 +17,7 @@ market_cap <- readRDS("Raw data/market_cap_data.RData") #Market capitalization
 fffactors_monthly <- read_csv("Raw data/F-F_Research_Data_Factors.CSV", skip = 2, n_max = 1149) #Need to limit the number of rows since the file contains yearly data as well
 fffactors_daily <- read_csv("Raw data/F-F_Research_Data_Factors_daily.CSV", skip = 3, n_max = 25210) #Last row is some copyright => skip
 momentum <- read_csv("Raw data/F-F_Momentum_Factor.CSV", skip = 12, n_max  = 1144, na = c("", "NA", -99.99, -999))
-liquidity <- read.delim("Raw data/liq_data_1962_2021.txt", skip = 10)
+liquidity <- read.delim("Raw data/liq_data_1962_2021.txt", skip = 10, na = c("", "NA", -99.99, -999, -99))
 
 ### Defining a function to strip an xts object of lines with 0 observations (all NAs) ###
 
@@ -65,7 +65,7 @@ momentum_xts <- momentum_xts["2007/"] #Restricting the period
 
 colnames(liquidity)[1] <- "Date"
 liquidity$Date <-  as.Date(paste0(as.character(liquidity$Date),"01"), "%Y%m%d") + months(1) - days(1) #Creating a date (end of month)
-liquidity_xts <- xts(liquidity[, 2], order.by = liquidity$Date) #Converting to xts
+liquidity_xts <- xts(liquidity[, 4], order.by = liquidity$Date) #Converting to xts
 names(liquidity_xts) <- "Liquidity" #Renaming
 liquidity_xts <- liquidity_xts["2007/"] #Restricting the period
 #saveRDS(liquidity_xts, "Final data/liquidity.RData") #Saving for future use
@@ -155,11 +155,11 @@ size <- as.xts(apply(size, 2, function(x) {ifelse(is.finite(x), x, NA)}), order.
 size <- strip_empty_lines(size) #Remove empty rows
 #saveRDS(size, file = "Final data/size.RData") #Saving for future use
 
-#####################################
-### Univariate portfolio analysis ###
-#####################################
+########################
+### Data description ###
+########################
 
-#Load relevant data
+### Load relevant data ###
 rm(list = ls()) #Removes everything from the environment
 monthly_returns <- readRDS("Final data/monthly_excess_returns.RData")
 skewness_data <- readRDS("Final data/skewness.RData")
@@ -169,6 +169,100 @@ size <- readRDS("Final data/size.RData")
 fffactors <- readRDS("Final data/fffactors_monthly.RData")
 momentum <- readRDS("Final data/momentum.RData")
 liquidity <- readRDS("Final data/liquidity.RData")
+
+#Restricting the period (01/01/2007 - 28/02/2022) but market cap starts at 28/02/2009 anyway and liquidity ends December 2021
+market_cap <- market_cap["/2022-02-28"]
+size <- size["/2022-02-28"]
+fffactors <- fffactors["/2022-02-28"]
+momentum <- momentum["/2022-02-28"]
+
+### Summary statistics ###
+
+#Defining a function to calculate the summary statistics
+calc_sum_stats <- function(var_data) {
+  period_stats <- matrix(ncol = 12, nrow = nrow(var_data)) #A matrix for the statistics from each period
+  perc_5 <- function(x, na.rm) {return(quantile(x, probs = 0.05, na.rm = na.rm))} #Function to calculate the 5th percentile of data
+  perc_25 <- function(x, na.rm) {return(quantile(x, probs = 0.25, na.rm = na.rm))} #Function to calculate the 25th percentile of data
+  perc_75 <- function(x, na.rm) {return(quantile(x, probs = 0.75, na.rm = na.rm))} #Function to calculate the 75th percentile of data
+  perc_95 <- function(x, na.rm) {return(quantile(x, probs = 0.95, na.rm = na.rm))} #Function to calculate the 25th percentile of data
+  calc_n <- function(x, na.rm) {return(sum(!is.na(x)))} #Function to calculate the number of observations
+  funcs <- list(mean, sd, skewness, kurtosis, min, perc_5, perc_25, median, perc_75, perc_95, max, calc_n) #Store the functions we will use
+  for (i in 1:nrow(var_data)) { #Loop through the periods
+    for (j in 1:length(funcs)) { #Loop through the functions
+      period_stats[i, j] <- funcs[[j]](as.numeric(var_data[i, ]), na.rm = T) #Apply each function and store the result 
+    }
+  }
+  time_avg <- apply(period_stats, 2, mean, na.rm = T) #Take a time series mean of each statistic
+  return(round(time_avg, 2)) #Round to two decimals and return the result
+}
+
+#Applying the function
+sum_stats <- as.data.frame(matrix(nrow = 5, ncol = 12)) #Place holder for the final summary statistics
+colnames(sum_stats) <- c("Mean", "Sd", "Skewness", "Kurtosis", "Min", "5%", "25%", "Median", "75%", "95%", "Max", "n") #Rename the columns as the statistics
+var_names <- c("Returns", "Skewness", "Beta", "Size", "Market cap") #Define a vector of variable names
+row.names(sum_stats) <- var_names #Rename the row names as the variables
+data_list <- list(monthly_returns, skewness_data, betas, size, market_cap) #Store the data in a list for looping
+for (i in 1:5) { #Loop through the variables and apply the function
+  sum_stats[i, ] <- calc_sum_stats(data_list[[i]])
+}
+sum_stats
+
+### Correlations ###
+
+#Defining a function to calculate the average correlation between two variables
+calc_corr <- function(var1, var2, method = "pearson") { #Expects data for both variables and an indicator for type (default is pearson)
+  var1 <- var1[index(var1) %in% index(var2)] #Filter only data available for both variables
+  cross_sec_corrs <- rep(NA, nrow(var1)) #Empty vector the results of each period
+  for (i in 1:nrow(var1)) { #Loop through the periods available for the first variable
+    cross_sec_corrs[i] <- cor(as.numeric(var1[i]), as.numeric(var2[index(var1)[i]]), use = "pairwise.complete.obs", method = method) #Calculate the correlation for each period
+  }
+  return(round(mean(cross_sec_corrs, na.rm = T), 2)) #Return the rounded time series average of the correlations
+}
+
+#Applying the function
+corrs <- as.data.frame(matrix(nrow = 5, ncol = 5)) #Empty matrix for the results
+colnames(corrs) <- var_names #Column names
+row.names(corrs) <- var_names #Row names
+indices <- combn(1:5, 2) #Get the indices for each pair (unique and excluding pairing variables with themselves)
+for (i in 1:ncol(indices)) { #Loop through the pairs
+  corrs[indices[1, i], indices[2, i]] <- calc_corr(data_list[[indices[1, i]]], data_list[[indices[2, i]]], method = "spearman") #Spearman correlation in the upper triangle
+  corrs[indices[2, i], indices[1, i]] <- calc_corr(data_list[[indices[2, i]]], data_list[[indices[1, i]]]) #Pearson correlation in the lower triangle
+}
+corrs
+
+### Persistence analysis ###
+
+#Defining a function to calculate persistence of a variable
+calc_pers <- function(var_data, lags = 5) { #Expects an xts object and the number of lags how far to calculate the correlations
+  final_persist <- rep(NA, lags) #A vector to store the results 
+  for (i in 1:lags) { #Loop through the lags
+    cross_persist <- rep(NA, nrow(var_data)) #A vector to store the results from each period
+    for (j in 1 :nrow(var_data)) { #Loop through the periods
+      current_period <- index(var_data)[j] #Store the current period
+      lagged_period <- as.Date(as.yearmon(current_period %m-% months(i)), frac = 1) #Derive the lagged period
+      if (!lagged_period %in% index(var_data)) { #If the lag is unavailable, skip
+        next
+      }
+      cross_persist[j] <- cor(as.numeric(var_data[j]), as.numeric(var_data[lagged_period]), use = "pairwise.complete.obs") #Calculate Pearson between the variable and the appropriate lag
+    }
+    final_persist[i] <- mean(cross_persist, na.rm = T) #Calculate the time series mean
+  }
+  return(round(final_persist, 3)) #Return the rounded correlations
+}
+
+#Apply the function
+lags <- 5 #Specify the required number of lags
+persistence <- as.data.frame(matrix(ncol = lags, nrow = 5)) #Data frame for the results (lags in columns, vars in rows)
+colnames(persistence) <- paste("Lag ", 1:lags) #Rename the columns with lag numbers
+row.names(persistence) <- var_names #Rename the rows with variable names
+for (i in 1:nrow(persistence)) { #Loop through the variables and calculate their persistence
+  persistence[i, ] <- calc_pers(data_list[[i]], lags = lags) #Apply the function
+}
+persistence
+
+#####################################
+### Univariate portfolio analysis ###
+#####################################
 
 ### Defining a function to perform a univariate sort ###
 
@@ -232,18 +326,23 @@ univariate_sort <- function(sort_variable, no_of_ports = 5, weighted = F) {
 ### Univariate sort on betas ###
 
 univariate_sort_betas <- univariate_sort(betas) #Equally weighted
-debug(univariate_sort)
+univariate_sort_betas
 univariate_sort_weighted_betas <- univariate_sort(betas, weighted = T) #Market cap weighted (rbind warning should be okay, just NAs)
+univariate_sort_weighted_betas
 
 ### Univariate sort on size ###
 
 univariate_sort_size <- univariate_sort(size) #Equally weighted
+univariate_sort_size
 univariate_sort_weighted_size <- univariate_sort(size, weighted = T) #Market cap weighted
+univariate_sort_weighted_size
 
 ### Univariate sort on skewness ###
 
 univariate_sort_skewness <- univariate_sort(skewness_data) #Equally weighted
+univariate_sort_skewness
 univariate_sort_weighted_skewness <- univariate_sort(skewness_data, weighted = T) #Market cap weighted (rbind warning should be okay, just NAs)
+univariate_sort_weighted_skewness
 
 ####################################
 ### Bivariate portfolio analysis ###
