@@ -348,7 +348,7 @@ univariate_sort_weighted_skewness
 ### Bivariate portfolio analysis ###
 ####################################
 
-### Defining a function to perform a bivariate sort (independent and weighted) ### IN PROGRESS (adjusting the univariate sort function)
+### Defining a function to perform a bivariate sort (independent and weighted)
 
 bivariate_sort <- function(sort_variable1, sort_variable2, percs1 = c(0.3, 0.7), percs2 = c(0.3, 0.7)) { #Accepts two sort variables data and required percentiles for the portfolios
   no_of_ports1 <- length(percs1) + 1 #Storing the number of portfolios of the first sort variable
