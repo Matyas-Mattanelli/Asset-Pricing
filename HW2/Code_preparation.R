@@ -39,6 +39,8 @@ colnames(fffactors_daily)[1] <- "Date"
 colnames(fffactors_monthly)[1] <- "Date"
 fffactors_daily$Date <- as.Date(as.character(fffactors_daily$Date), "%Y%m%d") #Creating a date (daily)
 fffactors_monthly$Date <-  as.Date(paste0(as.character(fffactors_monthly$Date),"01"), "%Y%m%d") + months(1) - days(1) #Creating a date (end of month)
+fffactors_monthly[, 2:5] <- fffactors_monthly[, 2:5] / 100 #Scale by 100 since the data is in percents
+fffactors_daily[, 2:5] <- fffactors_daily[, 2:5] / 100 #Scale by 100 since the data is in percents
 market_prem_daily <- xts(fffactors_daily$`Mkt-RF`, order.by = fffactors_daily$Date)
 names(market_prem_daily) <- "Mkt_RF_daily"
 market_prem_monthly <- xts(fffactors_monthly$`Mkt-RF`, order.by = fffactors_monthly$Date)
