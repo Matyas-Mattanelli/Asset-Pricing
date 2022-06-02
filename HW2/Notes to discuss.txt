@@ -7,3 +7,5 @@ May need to add the average portfolios for bivariate sort
 Bivariate sort returns strange warning. Likely a vector of NAs is passes to min and max - BUT WHERE??!!
 
 Add magnitude effects to Fama-MacBeth (how a var changes with one std dev, difference between IQR etc.)
+
+Check and resolve warnings
