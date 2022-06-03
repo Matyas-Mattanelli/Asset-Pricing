@@ -2,10 +2,6 @@ How do we approach the Newey-West adjustment? In the seminar there are hardcoded
 
 Correlation between beta and size is negative, weird right?
 
-May need to add the average portfolios for bivariate sort
-
-Bivariate sort returns strange warning. Likely a vector of NAs is passes to min and max - BUT WHERE??!!
-
-Add magnitude effects to Fama-MacBeth (how a var changes with one std dev, difference between IQR etc.)
+Added the average portfolios for bivariate sort - comments need to be adjusted
 
 Check and resolve warnings
