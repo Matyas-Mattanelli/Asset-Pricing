@@ -57,7 +57,7 @@ fffactors_monthly_xts <- fffactors_monthly_xts["2007/"] #Restricting the period 
 
 momentum <- as.data.frame(momentum)
 colnames(momentum)[1] <- "Date"
-momentum$Date <-  as.Date(paste0(as.character(momentum$Date[1]),"01"), "%Y%m%d") + months(1) - days(1) #Creating a date (end of month)
+momentum$Date <-  as.Date(paste0(as.character(momentum$Date),"01"), "%Y%m%d") + months(1) - days(1) #Creating a date (end of month)
 momentum_xts <- xts(momentum[, 2], order.by = momentum$Date) #Converting to xts
 names(momentum_xts) <- "Momentum" #Renaming
 momentum_xts <- momentum_xts["2007/"] #Restricting the period
