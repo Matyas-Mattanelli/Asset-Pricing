@@ -2,6 +2,6 @@ How do we approach the Newey-West adjustment? In the seminar there are hardcoded
 
 Correlation between beta and size is negative, weird right?
 
-Added the average portfolios for bivariate sort - comments need to be adjusted
+Need to add list of stocks in the appendix
 
-Check and resolve warnings
+Only introduction and conclusion remaining
