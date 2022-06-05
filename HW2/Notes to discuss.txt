@@ -2,6 +2,6 @@ How do we approach the Newey-West adjustment? In the seminar there are hardcoded
 
 Correlation between beta and size is negative, weird right?
 
-Need to add list of stocks in the appendix
+Need to add list of stocks in the appendix - DONE
 
-Only introduction and conclusion remaining
+Only introduction and conclusion remaining - DONE
