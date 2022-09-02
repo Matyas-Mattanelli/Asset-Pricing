@@ -1,6 +1,3 @@
-# Asset Pricing - JEM092
-## Home Assignments
-
-This repository serves as a means to cooperate on the Home Assignments for the Asset Pricing course.
+This repository contains the solutions for the assignments in the Asset Pricing course at IES FSV UK. The assignments demonstrate the ability to acquire, manipulate a and analyze real world data using conventional Asset Pricing methods.
 
 Authors: Matyáš Mattanelli, Petr Dvořáček, Jan Kubal
